@@ -136,77 +136,8 @@ class AnthropicScraper:
         return sorted(items, key=lambda x: self._parse_date(x.get('date', '')), reverse=True)
     
     def scrape_docs(self) -> List[Dict]:
-        """Obtiene cambios recientes del CHANGELOG de Claude Code en GitHub."""
-        updates = []
-        
-        try:
-            # 1. Obtener commits recientes del CHANGELOG.md via GitHub API
-            # No necesitamos auth para commits públicos
-            commits_url = "https://api.github.com/repos/anthropics/claude-code/commits?path=CHANGELOG.md&per_page=10"
-            
-            response = self.session.get(commits_url, timeout=30)
-            response.raise_for_status()
-            commits = response.json()
-            
-            from datetime import timezone
-            yesterday = datetime.now(timezone.utc) - timedelta(days=2)
-            
-            # Filtrar commits de los últimos 2 días
-            recent_commits = []
-            for commit in commits:
-                commit_date = datetime.fromisoformat(commit['commit']['committer']['date'].replace('Z', '+00:00'))
-                if commit_date > yesterday:
-                    recent_commits.append({
-                        'sha': commit['sha'][:7],
-                        'date': commit_date,
-                        'message': commit['commit']['message'].split('\n')[0],
-                        'url': commit['html_url']
-                    })
-            
-            if not recent_commits:
-                return [{
-                    'info': True,
-                    'message': 'No hay cambios en el CHANGELOG en los últimos 2 días'
-                }]
-            
-            # 2. Obtener el contenido actual del CHANGELOG
-            changelog_url = "https://raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md"
-            changelog_response = self.session.get(changelog_url, timeout=30)
-            changelog_response.raise_for_status()
-            changelog = changelog_response.text
-            
-            # 3. Parsear versiones del changelog
-            # Formato: ## 2.1.62\n\n- cambio 1\n- cambio 2\n\n## 2.1.61\n...
-            version_pattern = r'##\s+(\d+\.\d+\.\d+)\s*\n\n((?:-[^\n]+\n)+)'
-            versions = re.findall(version_pattern, changelog)
-            
-            # Tomar las 3 versiones más recientes
-            for version, changes_text in versions[:3]:
-                changes = [c.strip('- ') for c in changes_text.strip().split('\n') if c.strip()]
-                
-                updates.append({
-                    'version': version,
-                    'changes': changes,
-                    'url': f"https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md",
-                    'source': 'code.claude.com/docs (via GitHub)',
-                    'type': 'changelog'
-                })
-            
-            # Añadir info de commits recientes
-            updates.append({
-                'recent_commits': recent_commits,
-                'total_commits_recent': len(recent_commits)
-            })
-            
-        except Exception as e:
-            print(f"Error obteniendo docs: {e}")
-            updates.append({
-                'error': True,
-                'message': f'No se pudo obtener el CHANGELOG: {str(e)}',
-                'suggestion': 'Visitar https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md manualmente'
-            })
-        
-        return updates
+        """Docs se obtienen via GitHub (claude-code repo). Esta función ya no se usa."""
+        return []
     
     def get_github_updates(self, org_name: str = "anthropics", days_back: int = 2) -> List[Dict]:
         """Obtiene actualizaciones de repos de Anthropic en GitHub."""
@@ -572,7 +503,6 @@ def generate_summary_markdown(date_str: str, research: List[Dict], docs: List[Di
     
     lines.extend([
         f"- **🔬 Research**: [{research_count} papers](./research/{date_str}.md)",
-        f"- **📚 Docs**: [{docs_count} actualizaciones](./docs/{date_str}.md)",
         f"- **💻 GitHub**: [{github_count} repos con actividad](./github/{date_str}.md)",
         "",
         "---",
@@ -614,7 +544,6 @@ def main():
     
     # Crear carpetas
     os.makedirs('daily/research', exist_ok=True)
-    os.makedirs('daily/docs', exist_ok=True)
     os.makedirs('daily/github', exist_ok=True)
     
     # Generar archivos individuales
@@ -632,12 +561,6 @@ def main():
             print(f"  ⏭️  daily/research/{today}.md (sin papers nuevos, no generado)")
     else:
         print(f"  ⚠️  daily/research/{today}.md (error al obtener datos)")
-    
-    # Docs
-    docs_md = generate_docs_markdown(today, docs)
-    with open(f"daily/docs/{today}.md", 'w', encoding='utf-8') as f:
-        f.write(docs_md)
-    print(f"  ✅ daily/docs/{today}.md")
     
     # GitHub
     github_md = generate_github_markdown(today, github)

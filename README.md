@@ -1,20 +1,17 @@
 # Anthropic Daily Resume
 
-📰 Automated daily summary of Anthropic updates: Research, Documentation, and GitHub.
+📰 Automated daily summary of Anthropic updates: Research and GitHub.
 
 ## 🎯 What's Included Each Day
 
 - **🔬 Research**: New papers and publications from anthropic.com/research
-- **📚 Docs**: Changes in Claude documentation from docs.anthropic.com  
-- **💻 GitHub**: Activity in github.com/anthropics repositories
+- **💻 GitHub**: Activity in github.com/anthropics repositories (including claude-code changelog)
 
 ## 📁 Structure
 
 ```
 daily/
 ├── research/           # Research papers daily updates
-│   └── YYYY-MM-DD.md
-├── docs/              # Documentation daily updates
 │   └── YYYY-MM-DD.md
 ├── github/            # GitHub repositories daily updates
 │   └── YYYY-MM-DD.md
@@ -24,10 +21,9 @@ daily/
 ## 🚀 How It Works
 
 1. **GitHub Actions** runs the scraper daily at 9:00 AM UTC
-2. The bot fetches data from 3 sources:
+2. The bot fetches data from 2 sources:
    - Web scraping of Anthropic Research
-   - Web scraping of Anthropic Docs
-   - GitHub API for `anthropics` organization
+   - GitHub API for `anthropics` organization (includes claude-code changelog)
 3. Generates Markdown summaries in English
 4. Auto-commits to the repository
 
@@ -40,8 +36,8 @@ daily/
 
 ## 📅 Historical Archive
 
-| Date | Research | Docs | GitHub | Summary |
-|------|----------|------|--------|---------|
+| Date | Research | GitHub | Summary |
+|------|----------|--------|---------|
 <!-- Entries generated automatically -->
 
 ## 🔗 Sources
