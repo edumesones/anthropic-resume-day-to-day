@@ -26,72 +26,125 @@ class AnthropicScraper:
     
     def scrape_research(self) -> List[Dict]:
         """Obtiene papers de research de Anthropic."""
-        url = "https://www.anthropic.com/research"
+        # Intentar primero la página de research papers
+        urls = [
+            "https://www.anthropic.com/research",
+            "https://www.anthropic.com/research/papers",
+        ]
+        
         papers = []
         
-        try:
-            response = self.session.get(url, timeout=30)
-            response.raise_for_status()
-            soup = BeautifulSoup(response.content, 'html.parser')
-            
-            selectors = [
-                'article', '.research-item', '.publication', 
-                '[data-testid="research-card"]',
-                '.post', '.blog-post'
-            ]
-            
-            items = []
-            for selector in selectors:
-                items = soup.select(selector)
-                if items:
-                    break
-            
-            for item in items[:10]:
-                try:
-                    title_elem = item.select_one('h2, h3, .title, [data-testid="title"]')
-                    title = title_elem.get_text(strip=True) if title_elem else "Sin título"
+        for url in urls:
+            try:
+                response = self.session.get(url, timeout=30)
+                response.raise_for_status()
+                soup = BeautifulSoup(response.content, 'html.parser')
+                
+                # Buscar tarjetas de papers o publicaciones
+                # Intentar múltiples selectores
+                items = []
+                
+                # Selectores específicos para papers de investigación
+                selectors = [
+                    '[data-testid="research-card"]',
+                    '.research-paper',
+                    '.publication-card',
+                    'article[class*="research"]',
+                    'a[href*="research"]',
+                    '.card',
+                    'article'
+                ]
+                
+                for selector in selectors:
+                    items = soup.select(selector)
+                    if items and len(items) > 0:
+                        print(f"  Encontrados {len(items)} items con selector: {selector}")
+                        break
+                
+                for item in items[:15]:  # Aumentar a 15 items
+                    try:
+                        # Título - buscar en heading o atributo aria
+                        title_elem = item.select_one('h2, h3, h4, .title, [class*="title"]')
+                        title = ""
+                        if title_elem:
+                            title = title_elem.get_text(strip=True)
+                        else:
+                            # Intentar obtener de atributo aria-label
+                            title = item.get('aria-label', '')
+                        
+                        # Si no hay título, saltar
+                        if not title or len(title) < 5:
+                            continue
+                        
+                        # Descripción
+                        desc_elem = item.select_one('p, .description, .summary, [class*="desc"]')
+                        description = ""
+                        if desc_elem:
+                            description = desc_elem.get_text(strip=True)
+                        
+                        # Link
+                        link = ""
+                        if item.name == 'a':
+                            href = item.get('href', '')
+                            link = f"https://www.anthropic.com{href}" if href.startswith('/') else href
+                        else:
+                            link_elem = item.select_one('a[href]')
+                            if link_elem:
+                                href = link_elem.get('href', '')
+                                link = f"https://www.anthropic.com{href}" if href.startswith('/') else href
+                        
+                        # Fecha - buscar time element o texto con patrón de fecha
+                        date_str = ""
+                        date_elem = item.select_one('time, .date, [datetime]')
+                        if date_elem:
+                            date_str = date_elem.get('datetime') or date_elem.get_text(strip=True)
+                        else:
+                            # Buscar texto con patrón de fecha
+                            text = item.get_text()
+                            import re
+                            date_match = re.search(r'\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* \d{1,2},? \d{4}\b', text, re.IGNORECASE)
+                            if date_match:
+                                date_str = date_match.group()
+                        
+                        # Filtrar contenido no deseado (cookies, banners, etc.)
+                        if any(x in title.lower() for x in ['cookie', 'privacy', 'gdpr', 'settings', 'team', 'careers']):
+                            continue
+                        
+                        # Solo añadir si parece un paper válido
+                        if link and ('research' in link or 'paper' in link or 'anthropic.com' in link):
+                            papers.append({
+                                'title': title,
+                                'description': description[:400] + "..." if len(description) > 400 else description,
+                                'url': link,
+                                'date': date_str,
+                                'source': 'anthropic.com/research'
+                            })
+                    except Exception as e:
+                        print(f"Error procesando paper: {e}")
+                        continue
+                
+                if papers:
+                    break  # Si encontramos papers, no seguimos probando URLs
                     
-                    desc_elem = item.select_one('p, .description, .excerpt')
-                    description = desc_elem.get_text(strip=True) if desc_elem else ""
-                    
-                    link_elem = item.select_one('a[href]')
-                    link = ""
-                    if link_elem:
-                        href = link_elem.get('href', '')
-                        link = f"https://www.anthropic.com{href}" if href.startswith('/') else href
-                    
-                    date_elem = item.select_one('time, .date, [datetime]')
-                    date_str = ""
-                    if date_elem:
-                        date_str = date_elem.get('datetime') or date_elem.get_text(strip=True)
-                    
-                    papers.append({
-                        'title': title,
-                        'description': description[:300] + "..." if len(description) > 300 else description,
-                        'url': link,
-                        'date': date_str,
-                        'source': 'anthropic.com/research'
-                    })
-                except Exception as e:
-                    print(f"Error procesando paper: {e}")
-                    continue
-                    
-        except Exception as e:
-            print(f"Error scrapeando research: {e}")
+            except Exception as e:
+                print(f"Error scrapeando research de {url}: {e}")
+                continue
+        
+        if not papers:
             papers.append({
                 'error': True,
-                'message': f"No se pudo obtener research: {str(e)}",
-                'url': url
+                'message': 'No se pudieron obtener papers de research',
+                'suggestion': 'Visitar https://www.anthropic.com/research manualmente'
             })
         
         return papers
     
     def scrape_docs(self) -> List[Dict]:
         """Obtiene cambios recientes en documentación."""
+        # URLs con changelog documentado
         urls = [
-            "https://docs.anthropic.com/en/api/changelog",
             "https://docs.anthropic.com/en/release-notes",
-            "https://docs.anthropic.com/en/home"
+            "https://docs.anthropic.com/en/api/changelog",
         ]
         
         updates = []
@@ -102,21 +155,52 @@ class AnthropicScraper:
                 response.raise_for_status()
                 soup = BeautifulSoup(response.content, 'html.parser')
                 
-                sections = soup.select('h2, h3, .changelog-item, .update')[:5]
+                # Buscar artículos de changelog - selectores específicos
+                # Intentar varios selectores posibles
+                articles = []
                 
-                for section in sections:
+                # Selector para release notes estructurado
+                articles = soup.select('article, .changelog-entry, [class*="changelog"], [class*="release"]')
+                
+                # Si no encuentra, buscar por headings con fechas
+                if not articles:
+                    headers = soup.find_all(['h2', 'h3'])
+                    for header in headers:
+                        text = header.get_text(strip=True)
+                        # Buscar headers que parezcan fechas o versiones
+                        if any(x in text.lower() for x in ['2024', '2025', 'v.', 'version', 'changelog', 'release']):
+                            articles.append(header.parent if header.parent else header)
+                
+                for article in articles[:5]:
                     try:
-                        title = section.get_text(strip=True)
-                        next_p = section.find_next('p')
-                        description = next_p.get_text(strip=True) if next_p else ""
+                        # Buscar título
+                        title_elem = article.select_one('h1, h2, h3, .title, [class*="title"]')
+                        title = title_elem.get_text(strip=True) if title_elem else "Actualización"
                         
-                        updates.append({
-                            'title': title,
-                            'description': description[:250] + "..." if len(description) > 250 else description,
-                            'url': url,
-                            'type': 'documentation',
-                            'source': 'docs.anthropic.com'
-                        })
+                        # Ignorar elementos de cookies o banners
+                        if any(x in title.lower() for x in ['cookie', 'privacy', 'gdpr', 'consent']):
+                            continue
+                        
+                        # Buscar descripción
+                        desc_elem = article.select_one('p, .description, .content')
+                        description = ""
+                        if desc_elem:
+                            description = desc_elem.get_text(strip=True)
+                        else:
+                            # Buscar siguiente párrafo después del título
+                            next_p = article.find('p')
+                            if next_p:
+                                description = next_p.get_text(strip=True)
+                        
+                        # Solo añadir si tiene contenido sustancial
+                        if len(description) > 20 and len(title) > 3:
+                            updates.append({
+                                'title': title,
+                                'description': description[:300] + "..." if len(description) > 300 else description,
+                                'url': url,
+                                'type': 'documentation',
+                                'source': 'docs.anthropic.com'
+                            })
                     except:
                         continue
                 
@@ -131,12 +215,12 @@ class AnthropicScraper:
             updates.append({
                 'error': True,
                 'message': 'No se pudieron obtener actualizaciones de documentación',
-                'suggestion': 'Visitar https://docs.anthropic.com/en/api/changelog manualmente'
+                'suggestion': 'Visitar https://docs.anthropic.com/en/release-notes manualmente'
             })
         
         return updates
     
-    def get_github_updates(self, org_name: str = "anthropics") -> List[Dict]:
+    def get_github_updates(self, org_name: str = "anthropics", days_back: int = 2) -> List[Dict]:
         """Obtiene actualizaciones de repos de Anthropic en GitHub."""
         if not self.github:
             return [{
@@ -144,72 +228,95 @@ class AnthropicScraper:
                 'message': 'GitHub token no configurado'
             }]
         
+        from datetime import timezone
+        
         updates = []
-        yesterday = datetime.now() - timedelta(days=1)
+        # Crear fecha aware (con timezone) para comparar correctamente
+        yesterday = datetime.now(timezone.utc) - timedelta(days=days_back)
         
         try:
             org = self.github.get_organization(org_name)
             repos = org.get_repos(type='public', sort='updated')
             
-            for repo in repos[:20]:
+            print(f"  Revisando {repos.totalCount} repos de {org_name}...")
+            
+            for repo in repos[:30]:  # Aumentar a 30 repos
                 try:
-                    if repo.updated_at < yesterday:
+                    # Convertir updated_at a aware si es naive
+                    repo_updated = repo.updated_at
+                    if repo_updated.tzinfo is None:
+                        repo_updated = repo_updated.replace(tzinfo=timezone.utc)
+                    
+                    if repo_updated < yesterday:
                         continue
                     
-                    commits = repo.get_commits(since=yesterday)
-                    recent_commits = list(commits[:3])
+                    print(f"    📁 {repo.name} - revisando actividad...")
                     
-                    releases = repo.get_releases()
-                    recent_release = None
+                    # Obtener commits recientes
+                    recent_commits = []
                     try:
-                        for release in releases:
-                            if release.created_at > yesterday:
-                                recent_release = release
-                                break
-                    except:
-                        pass
+                        commits = repo.get_commits(since=yesterday)
+                        for commit in commits[:5]:  # Top 5 commits
+                            commit_date = commit.commit.author.date
+                            if commit_date.tzinfo is None:
+                                commit_date = commit_date.replace(tzinfo=timezone.utc)
+                            
+                            recent_commits.append({
+                                'message': commit.commit.message.split('\n')[0][:100],
+                                'url': commit.html_url,
+                                'author': commit.commit.author.name,
+                                'date': commit_date.isoformat()
+                            })
+                    except Exception as e:
+                        print(f"      Error obteniendo commits: {e}")
                     
-                    if recent_commits or recent_release:
+                    # Obtener releases recientes
+                    recent_releases = []
+                    try:
+                        releases = repo.get_releases()
+                        for release in releases[:2]:  # Top 2 releases
+                            release_date = release.created_at
+                            if release_date and release_date.tzinfo is None:
+                                release_date = release_date.replace(tzinfo=timezone.utc)
+                            
+                            if release_date and release_date > yesterday:
+                                recent_releases.append({
+                                    'tag': release.tag_name,
+                                    'name': release.title,
+                                    'url': release.html_url,
+                                    'body': (release.body[:500] + "...") if release.body and len(release.body) > 500 else (release.body or "")
+                                })
+                    except Exception as e:
+                        print(f"      Error obteniendo releases: {e}")
+                    
+                    # Si hay actividad, agregar al reporte
+                    if recent_commits or recent_releases:
                         update_info = {
                             'name': repo.name,
                             'url': repo.html_url,
-                            'description': repo.description or "Sin descripción",
+                            'description': repo.description or "No description",
                             'stars': repo.stargazers_count,
-                            'language': repo.language,
-                            'updated_at': repo.updated_at.isoformat(),
-                            'commits': [],
-                            'release': None
+                            'language': repo.language or "Unknown",
+                            'updated_at': repo_updated.isoformat(),
+                            'commits': recent_commits,
+                            'releases': recent_releases
                         }
                         
-                        for commit in recent_commits:
-                            update_info['commits'].append({
-                                'message': commit.commit.message.split('\n')[0],
-                                'url': commit.html_url,
-                                'author': commit.commit.author.name,
-                                'date': commit.commit.author.date.isoformat()
-                            })
-                        
-                        if recent_release:
-                            update_info['release'] = {
-                                'tag': recent_release.tag_name,
-                                'name': recent_release.title,
-                                'url': recent_release.html_url,
-                                'body': recent_release.body[:500] + "..." if recent_release.body and len(recent_release.body) > 500 else (recent_release.body or "")
-                            }
-                        
                         updates.append(update_info)
+                        print(f"      ✅ {len(recent_commits)} commits, {len(recent_releases)} releases")
                         
                 except Exception as e:
-                    print(f"Error procesando repo {repo.name}: {e}")
+                    print(f"    ⚠️ Error procesando repo {repo.name}: {e}")
                     continue
                     
         except Exception as e:
-            print(f"Error accediendo a GitHub: {e}")
+            print(f"❌ Error accediendo a GitHub: {e}")
             updates.append({
                 'error': True,
                 'message': f'Error accediendo a GitHub: {str(e)}'
             })
         
+        print(f"\n  Total repos con actividad: {len(updates)}")
         return updates
     
     def calculate_utility(self, repo_update: Dict) -> tuple:
@@ -360,7 +467,7 @@ def generate_github_markdown(date_str: str, repos: List[Dict]) -> str:
     ]
     
     if repos and not repos[0].get('error'):
-        lines.append(f"## Repositorios con actividad: {len(repos)}")
+        lines.append(f"## Repositorios con actividad reciente: {len(repos)}")
         lines.append("")
         
         scraper = AnthropicScraper()
@@ -375,33 +482,45 @@ def generate_github_markdown(date_str: str, repos: List[Dict]) -> str:
                 lines.append(f"*{repo['description']}*")
                 lines.append("")
             
+            # Info del repo
+            lines.append(f"⭐ {repo.get('stars', 0)} stars | 📝 {repo.get('language', 'Unknown')}")
+            lines.append("")
+            
             if repo.get('commits'):
-                lines.append("**Commits recientes**:")
+                lines.append(f"**Commits ({len(repo['commits'])}):**")
                 lines.append("")
-                for commit in repo['commits'][:3]:
+                for commit in repo['commits'][:5]:
                     msg = commit.get('message', '')[:80]
                     if len(commit.get('message', '')) > 80:
                         msg += "..."
-                    lines.append(f"- [{msg}]({commit['url']})")
+                    author = commit.get('author', 'Unknown')
+                    lines.append(f"- `{author}`: [{msg}]({commit['url']})")
                 lines.append("")
             
-            if repo.get('release'):
-                release = repo['release']
-                lines.append(f"**Release**: [{release['tag']} - {release['name']}]({release['url']})")
+            # Releases (puede ser múltiple)
+            releases = repo.get('releases', [])
+            if releases:
+                lines.append(f"**Releases ({len(releases)}):**")
                 lines.append("")
-                if release.get('body'):
-                    body = release['body'][:200].replace('\n', ' ')
-                    lines.append(f"> {body}...")
-                    lines.append("")
+                for release in releases[:2]:
+                    lines.append(f"- [{release['tag']}]({release['url']}) - {release['name']}")
+                    if release.get('body'):
+                        body = release['body'][:150].replace('\n', ' ')
+                        lines.append(f"  > {body}...")
+                lines.append("")
+            elif repo.get('release'):  # Backward compatibility
+                release = repo['release']
+                lines.append(f"**Release**: [{release['tag']}]({release['url']})")
+                lines.append("")
             
             score, reasons = scraper.calculate_utility(repo)
             stars = "⭐" * score
-            lines.append(f"**Utilidad**: {stars} ({score}/5)")
+            lines.append(f"**Importancia**: {stars} ({score}/5)")
             if reasons:
-                lines.append(f"- {', '.join(reasons)}")
+                lines.append(f"*Por qué: {', '.join(reasons)}*")
             lines.append("")
             
-            lines.append(f"**Link**: [Ver en GitHub]({repo['url']})")
+            lines.append(f"[Ver en GitHub →]({repo['url']})")
             lines.append("")
             lines.append("---")
             lines.append("")
