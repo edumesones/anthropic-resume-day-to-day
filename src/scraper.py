@@ -25,7 +25,7 @@ class AnthropicScraper:
         })
     
     def scrape_research(self) -> List[Dict]:
-        """Obtiene papers de research de Anthropic - solo los más recientes."""
+        """Obtiene los 5 papers más recientes de la sección Publications de Anthropic Research."""
         from datetime import datetime
         
         url = "https://www.anthropic.com/research"
@@ -36,12 +36,24 @@ class AnthropicScraper:
             response.raise_for_status()
             soup = BeautifulSoup(response.content, 'html.parser')
             
-            # La página de Anthropic tiene un grid de publicaciones
-            # Cada item es un enlace a /research/[slug]
-            items = soup.select('a[href^="/research/"]')
-            print(f"  Encontrados {len(items)} posibles papers")
+            # Buscar el header "Publications"
+            h2_publications = soup.find('h2', string=lambda x: x and 'Publications' in x)
+            if not h2_publications:
+                print("  No se encontró la sección Publications")
+                papers.append({
+                    'error': True,
+                    'message': 'No se encontró la sección Publications en la página'
+                })
+                return papers
             
-            for item in items:
+            # Obtener todos los enlaces DESPUÉS del header Publications
+            # Estos son los artículos de la sección Publications
+            all_links_after = h2_publications.find_all_next('a', href=lambda x: x and x.startswith('/research/'))
+            
+            print(f"  Encontrados {len(all_links_after)} papers en Publications")
+            
+            # Procesar máximo 5 papers (los más recientes están primero)
+            for item in all_links_after[:5]:
                 try:
                     href = item.get('href', '')
                     if not href or href == '/research/':
@@ -49,55 +61,33 @@ class AnthropicScraper:
                     
                     link = f"https://www.anthropic.com{href}"
                     
-                    # Buscar el contenedor del paper (article o div padre)
-                    container = item.find_parent(['article', 'div[data-testid]']) or item
+                    # El contenido del link tiene la fecha al inicio, luego spans con categoría y título
+                    full_text = item.get_text(strip=True)
                     
-                    # Título - buscar específicamente en heading elements dentro de la tarjeta
-                    title_elem = container.select_one('h3, h2, h4')
-                    title = ""
-                    if title_elem:
-                        title = title_elem.get_text(strip=True)
+                    # Extraer fecha del inicio (formato: "Feb 25, 2026")
+                    date_match = re.search(r'^(\w{3,}\s+\d{1,2},?\s+\d{4})', full_text)
+                    date_str = date_match.group(1) if date_match else ""
                     
-                    # Si no hay heading, intentar extraer del link
-                    if not title:
-                        text_lines = [line.strip() for line in item.get_text().split('\n') if line.strip()]
-                        if len(text_lines) >= 2:
-                            title = text_lines[-1]  # Última línea suele ser el título
-                        elif text_lines:
-                            title = text_lines[0]
+                    # Los spans contienen: [0] = categoría, [1] = título
+                    spans = item.find_all('span')
+                    if len(spans) >= 2:
+                        category = spans[0].get_text(strip=True)
+                        title = spans[1].get_text(strip=True)
+                    else:
+                        continue
                     
                     if not title or len(title) < 5:
                         continue
                     
-                    # Filtrar navegación/cookies/páginas no-paper
-                    skip_keywords = ['cookie', 'privacy', 'gdpr', 'terms', 'team', 'careers', 'jobs', 'research overview']
-                    if any(x in title.lower() for x in skip_keywords):
-                        continue
-                    
-                    # Descripción
-                    desc_elem = container.select_one('p[class*="description"], p[class*="summary"], article p')
-                    description = ""
-                    if desc_elem:
-                        description = desc_elem.get_text(strip=True)
-                    
-                    # Fecha - buscar específicamente
-                    date_str = ""
-                    date_elem = container.select_one('time')
-                    if date_elem:
-                        date_str = date_elem.get('datetime') or date_elem.get_text(strip=True)
-                    else:
-                        full_text = container.get_text()
-                        import re
-                        # Buscar patrón de fecha
-                        date_match = re.search(r'\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* \d{1,2},? \d{4}\b', full_text, re.IGNORECASE)
-                        if date_match:
-                            date_str = date_match.group()
+                    # Descripción es la categoría para dar contexto
+                    description = f"Category: {category}" if category else ""
                     
                     papers.append({
                         'title': title,
-                        'description': description[:400] + "..." if len(description) > 400 else description,
+                        'description': description,
                         'url': link,
                         'date': date_str,
+                        'category': category,
                         'source': 'anthropic.com/research'
                     })
                     
@@ -114,12 +104,7 @@ class AnthropicScraper:
             })
             return papers
         
-        # Ordenar por fecha (más recientes primero) y tomar solo los 5 últimos
-        if papers and not papers[0].get('error'):
-            papers = self._sort_by_date(papers)
-            papers = papers[:5]  # Solo los 5 más recientes
-            print(f"  Papers más recientes: {len(papers)}")
-        
+        print(f"  Papers extraídos: {len(papers)}")
         return papers
     
     def _parse_date(self, date_str: str) -> datetime:
