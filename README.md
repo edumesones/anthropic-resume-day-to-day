@@ -10,9 +10,9 @@
 
 ## 📅 Histórico
 
-| Fecha | Link |
-|-------|------|
-<!-- Los entries se generan automáticamente -->
+| Fecha | Research | Docs | GitHub | Resumen |
+|-------|----------|------|--------|---------|
+| 2026-02-27 | [Research](./daily/research/2026-02-27.md) | [Docs](./daily/docs/2026-02-27.md) | [GitHub](./daily/github/2026-02-27.md) | [Resumen](./daily/2026-02-27.md) |
 
 ## 🚀 Cómo funciona
 
