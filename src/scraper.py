@@ -25,197 +25,185 @@ class AnthropicScraper:
         })
     
     def scrape_research(self) -> List[Dict]:
-        """Obtiene papers de research de Anthropic."""
-        # Intentar primero la página de research papers
-        urls = [
-            "https://www.anthropic.com/research",
-            "https://www.anthropic.com/research/papers",
-        ]
+        """Obtiene papers de research de Anthropic - solo los más recientes."""
+        from datetime import datetime
         
+        url = "https://www.anthropic.com/research"
         papers = []
         
-        for url in urls:
-            try:
-                response = self.session.get(url, timeout=30)
-                response.raise_for_status()
-                soup = BeautifulSoup(response.content, 'html.parser')
-                
-                # Buscar tarjetas de papers o publicaciones
-                # Intentar múltiples selectores
-                items = []
-                
-                # Selectores específicos para papers de investigación
-                selectors = [
-                    '[data-testid="research-card"]',
-                    '.research-paper',
-                    '.publication-card',
-                    'article[class*="research"]',
-                    'a[href*="research"]',
-                    '.card',
-                    'article'
-                ]
-                
-                for selector in selectors:
-                    items = soup.select(selector)
-                    if items and len(items) > 0:
-                        print(f"  Encontrados {len(items)} items con selector: {selector}")
-                        break
-                
-                for item in items[:15]:  # Aumentar a 15 items
-                    try:
-                        # Título - buscar en heading o atributo aria
-                        title_elem = item.select_one('h2, h3, h4, .title, [class*="title"]')
-                        title = ""
-                        if title_elem:
-                            title = title_elem.get_text(strip=True)
-                        else:
-                            # Intentar obtener de atributo aria-label
-                            title = item.get('aria-label', '')
-                        
-                        # Si no hay título, saltar
-                        if not title or len(title) < 5:
-                            continue
-                        
-                        # Descripción
-                        desc_elem = item.select_one('p, .description, .summary, [class*="desc"]')
-                        description = ""
-                        if desc_elem:
-                            description = desc_elem.get_text(strip=True)
-                        
-                        # Link
-                        link = ""
-                        if item.name == 'a':
-                            href = item.get('href', '')
-                            link = f"https://www.anthropic.com{href}" if href.startswith('/') else href
-                        else:
-                            link_elem = item.select_one('a[href]')
-                            if link_elem:
-                                href = link_elem.get('href', '')
-                                link = f"https://www.anthropic.com{href}" if href.startswith('/') else href
-                        
-                        # Fecha - buscar time element o texto con patrón de fecha
-                        date_str = ""
-                        date_elem = item.select_one('time, .date, [datetime]')
-                        if date_elem:
-                            date_str = date_elem.get('datetime') or date_elem.get_text(strip=True)
-                        else:
-                            # Buscar texto con patrón de fecha
-                            text = item.get_text()
-                            import re
-                            date_match = re.search(r'\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* \d{1,2},? \d{4}\b', text, re.IGNORECASE)
-                            if date_match:
-                                date_str = date_match.group()
-                        
-                        # Filtrar contenido no deseado (cookies, banners, etc.)
-                        if any(x in title.lower() for x in ['cookie', 'privacy', 'gdpr', 'settings', 'team', 'careers']):
-                            continue
-                        
-                        # Solo añadir si parece un paper válido
-                        if link and ('research' in link or 'paper' in link or 'anthropic.com' in link):
-                            papers.append({
-                                'title': title,
-                                'description': description[:400] + "..." if len(description) > 400 else description,
-                                'url': link,
-                                'date': date_str,
-                                'source': 'anthropic.com/research'
-                            })
-                    except Exception as e:
-                        print(f"Error procesando paper: {e}")
+        try:
+            response = self.session.get(url, timeout=30)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.content, 'html.parser')
+            
+            # La página de Anthropic tiene un grid de publicaciones
+            # Cada item es un enlace a /research/[slug]
+            items = soup.select('a[href^="/research/"]')
+            print(f"  Encontrados {len(items)} posibles papers")
+            
+            for item in items:
+                try:
+                    href = item.get('href', '')
+                    if not href or href == '/research/':
                         continue
-                
-                if papers:
-                    break  # Si encontramos papers, no seguimos probando URLs
                     
-            except Exception as e:
-                print(f"Error scrapeando research de {url}: {e}")
-                continue
-        
-        if not papers:
+                    link = f"https://www.anthropic.com{href}"
+                    
+                    # Buscar el contenedor del paper (article o div padre)
+                    container = item.find_parent(['article', 'div[data-testid]']) or item
+                    
+                    # Título - buscar específicamente en heading elements dentro de la tarjeta
+                    title_elem = container.select_one('h3, h2, h4')
+                    title = ""
+                    if title_elem:
+                        title = title_elem.get_text(strip=True)
+                    
+                    # Si no hay heading, intentar extraer del link
+                    if not title:
+                        text_lines = [line.strip() for line in item.get_text().split('\n') if line.strip()]
+                        if len(text_lines) >= 2:
+                            title = text_lines[-1]  # Última línea suele ser el título
+                        elif text_lines:
+                            title = text_lines[0]
+                    
+                    if not title or len(title) < 5:
+                        continue
+                    
+                    # Filtrar navegación/cookies/páginas no-paper
+                    skip_keywords = ['cookie', 'privacy', 'gdpr', 'terms', 'team', 'careers', 'jobs', 'research overview']
+                    if any(x in title.lower() for x in skip_keywords):
+                        continue
+                    
+                    # Descripción
+                    desc_elem = container.select_one('p[class*="description"], p[class*="summary"], article p')
+                    description = ""
+                    if desc_elem:
+                        description = desc_elem.get_text(strip=True)
+                    
+                    # Fecha - buscar específicamente
+                    date_str = ""
+                    date_elem = container.select_one('time')
+                    if date_elem:
+                        date_str = date_elem.get('datetime') or date_elem.get_text(strip=True)
+                    else:
+                        full_text = container.get_text()
+                        import re
+                        # Buscar patrón de fecha
+                        date_match = re.search(r'\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* \d{1,2},? \d{4}\b', full_text, re.IGNORECASE)
+                        if date_match:
+                            date_str = date_match.group()
+                    
+                    papers.append({
+                        'title': title,
+                        'description': description[:400] + "..." if len(description) > 400 else description,
+                        'url': link,
+                        'date': date_str,
+                        'source': 'anthropic.com/research'
+                    })
+                    
+                except Exception as e:
+                    print(f"Error procesando paper: {e}")
+                    continue
+                    
+        except Exception as e:
+            print(f"Error scrapeando research: {e}")
             papers.append({
                 'error': True,
-                'message': 'No se pudieron obtener papers de research',
+                'message': f'No se pudo obtener research: {str(e)}',
                 'suggestion': 'Visitar https://www.anthropic.com/research manualmente'
             })
+            return papers
+        
+        # Ordenar por fecha (más recientes primero) y tomar solo los 5 últimos
+        if papers and not papers[0].get('error'):
+            papers = self._sort_by_date(papers)
+            papers = papers[:5]  # Solo los 5 más recientes
+            print(f"  Papers más recientes: {len(papers)}")
         
         return papers
     
+    def _parse_date(self, date_str: str) -> datetime:
+        """Parsea fecha string a datetime para ordenar."""
+        from dateutil import parser as date_parser
+        try:
+            return date_parser.parse(date_str)
+        except:
+            # Si no se puede parsear, devolver fecha muy antigua
+            return datetime.min
+    
+    def _sort_by_date(self, items: List[Dict]) -> List[Dict]:
+        """Ordena items por fecha (más recientes primero)."""
+        return sorted(items, key=lambda x: self._parse_date(x.get('date', '')), reverse=True)
+    
     def scrape_docs(self) -> List[Dict]:
-        """Obtiene cambios recientes en documentación."""
-        # URLs con changelog documentado
-        urls = [
-            "https://docs.anthropic.com/en/release-notes",
-            "https://docs.anthropic.com/en/api/changelog",
-        ]
-        
+        """Obtiene cambios recientes del CHANGELOG de Claude Code en GitHub."""
         updates = []
         
-        for url in urls:
-            try:
-                response = self.session.get(url, timeout=30)
-                response.raise_for_status()
-                soup = BeautifulSoup(response.content, 'html.parser')
+        try:
+            # 1. Obtener commits recientes del CHANGELOG.md via GitHub API
+            # No necesitamos auth para commits públicos
+            commits_url = "https://api.github.com/repos/anthropics/claude-code/commits?path=CHANGELOG.md&per_page=10"
+            
+            response = self.session.get(commits_url, timeout=30)
+            response.raise_for_status()
+            commits = response.json()
+            
+            from datetime import timezone
+            yesterday = datetime.now(timezone.utc) - timedelta(days=2)
+            
+            # Filtrar commits de los últimos 2 días
+            recent_commits = []
+            for commit in commits:
+                commit_date = datetime.fromisoformat(commit['commit']['committer']['date'].replace('Z', '+00:00'))
+                if commit_date > yesterday:
+                    recent_commits.append({
+                        'sha': commit['sha'][:7],
+                        'date': commit_date,
+                        'message': commit['commit']['message'].split('\n')[0],
+                        'url': commit['html_url']
+                    })
+            
+            if not recent_commits:
+                return [{
+                    'info': True,
+                    'message': 'No hay cambios en el CHANGELOG en los últimos 2 días'
+                }]
+            
+            # 2. Obtener el contenido actual del CHANGELOG
+            changelog_url = "https://raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md"
+            changelog_response = self.session.get(changelog_url, timeout=30)
+            changelog_response.raise_for_status()
+            changelog = changelog_response.text
+            
+            # 3. Parsear versiones del changelog
+            # Formato: ## 2.1.62\n\n- cambio 1\n- cambio 2\n\n## 2.1.61\n...
+            version_pattern = r'##\s+(\d+\.\d+\.\d+)\s*\n\n((?:-[^\n]+\n)+)'
+            versions = re.findall(version_pattern, changelog)
+            
+            # Tomar las 3 versiones más recientes
+            for version, changes_text in versions[:3]:
+                changes = [c.strip('- ') for c in changes_text.strip().split('\n') if c.strip()]
                 
-                # Buscar artículos de changelog - selectores específicos
-                # Intentar varios selectores posibles
-                articles = []
-                
-                # Selector para release notes estructurado
-                articles = soup.select('article, .changelog-entry, [class*="changelog"], [class*="release"]')
-                
-                # Si no encuentra, buscar por headings con fechas
-                if not articles:
-                    headers = soup.find_all(['h2', 'h3'])
-                    for header in headers:
-                        text = header.get_text(strip=True)
-                        # Buscar headers que parezcan fechas o versiones
-                        if any(x in text.lower() for x in ['2024', '2025', 'v.', 'version', 'changelog', 'release']):
-                            articles.append(header.parent if header.parent else header)
-                
-                for article in articles[:5]:
-                    try:
-                        # Buscar título
-                        title_elem = article.select_one('h1, h2, h3, .title, [class*="title"]')
-                        title = title_elem.get_text(strip=True) if title_elem else "Actualización"
-                        
-                        # Ignorar elementos de cookies o banners
-                        if any(x in title.lower() for x in ['cookie', 'privacy', 'gdpr', 'consent']):
-                            continue
-                        
-                        # Buscar descripción
-                        desc_elem = article.select_one('p, .description, .content')
-                        description = ""
-                        if desc_elem:
-                            description = desc_elem.get_text(strip=True)
-                        else:
-                            # Buscar siguiente párrafo después del título
-                            next_p = article.find('p')
-                            if next_p:
-                                description = next_p.get_text(strip=True)
-                        
-                        # Solo añadir si tiene contenido sustancial
-                        if len(description) > 20 and len(title) > 3:
-                            updates.append({
-                                'title': title,
-                                'description': description[:300] + "..." if len(description) > 300 else description,
-                                'url': url,
-                                'type': 'documentation',
-                                'source': 'docs.anthropic.com'
-                            })
-                    except:
-                        continue
-                
-                if updates:
-                    break
-                    
-            except Exception as e:
-                print(f"Error con {url}: {e}")
-                continue
-        
-        if not updates:
+                updates.append({
+                    'version': version,
+                    'changes': changes,
+                    'url': f"https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md",
+                    'source': 'code.claude.com/docs (via GitHub)',
+                    'type': 'changelog'
+                })
+            
+            # Añadir info de commits recientes
+            updates.append({
+                'recent_commits': recent_commits,
+                'total_commits_recent': len(recent_commits)
+            })
+            
+        except Exception as e:
+            print(f"Error obteniendo docs: {e}")
             updates.append({
                 'error': True,
-                'message': 'No se pudieron obtener actualizaciones de documentación',
-                'suggestion': 'Visitar https://docs.anthropic.com/en/release-notes manualmente'
+                'message': f'No se pudo obtener el CHANGELOG: {str(e)}',
+                'suggestion': 'Visitar https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md manualmente'
             })
         
         return updates
@@ -411,9 +399,9 @@ def generate_research_markdown(date_str: str, papers: List[Dict]) -> str:
 
 
 def generate_docs_markdown(date_str: str, docs: List[Dict]) -> str:
-    """Genera markdown solo para Docs."""
+    """Genera markdown solo para Docs (Changelog de Claude Code)."""
     lines = [
-        f"# Documentación - {date_str}",
+        f"# Changelog Claude Code - {date_str}",
         "",
         f"**Fecha**: {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}",
         "",
@@ -421,22 +409,45 @@ def generate_docs_markdown(date_str: str, docs: List[Dict]) -> str:
         "",
     ]
     
-    if docs and not docs[0].get('error'):
-        lines.append(f"## Actualizaciones encontradas: {len(docs)}")
+    # Filtrar solo entradas de versión (no metadatos como commits recientes)
+    version_entries = [d for d in docs if d.get('version')]
+    commit_info = next((d for d in docs if d.get('recent_commits')), None)
+    
+    if version_entries:
+        lines.append(f"## Versiones recientes: {len(version_entries)}")
         lines.append("")
         
-        for doc in docs[:10]:
+        for entry in version_entries:
+            version = entry['version']
+            changes = entry.get('changes', [])
+            
             lines.extend([
-                f"### [{doc['title']}]({doc['url']})",
+                f"### v{version}",
+                "",
+                "**Cambios:**",
                 "",
             ])
-            if doc.get('description'):
-                lines.append(doc['description'])
-                lines.append("")
-            lines.append(f"**Link**: [{doc['url']}]({doc['url']})")
+            
+            for change in changes[:10]:  # Max 10 cambios por versión
+                lines.append(f"- {change}")
+            
+            lines.append("")
+            lines.append(f"[Ver en GitHub]({entry['url']}#v{version.replace('.', '')})")
             lines.append("")
             lines.append("---")
             lines.append("")
+        
+        # Añadir info de commits recientes si existe
+        if commit_info and commit_info.get('recent_commits'):
+            lines.append("### Commits recientes al CHANGELOG")
+            lines.append("")
+            for commit in commit_info['recent_commits'][:5]:
+                lines.append(f"- `{commit['sha']}` {commit['message']} ({commit['date'][:10]})")
+            lines.append("")
+            
+    elif docs and docs[0].get('info'):
+        lines.append(f"ℹ️ {docs[0].get('message', 'Sin novedades')}")
+        lines.append("")
     elif docs and docs[0].get('error'):
         lines.append(f"⚠️ **Error**: {docs[0].get('message', 'No disponible')}")
         lines.append("")
@@ -447,7 +458,7 @@ def generate_docs_markdown(date_str: str, docs: List[Dict]) -> str:
     lines.extend([
         "---",
         "",
-        "*Fuente*: [docs.anthropic.com](https://docs.anthropic.com)",
+        "*Fuente*: [github.com/anthropics/claude-code/CHANGELOG.md](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md)",
         "",
         "*Generado automáticamente*",
     ])
@@ -609,11 +620,18 @@ def main():
     # Generar archivos individuales
     print("📝 Generando archivos...")
     
-    # Research
-    research_md = generate_research_markdown(today, research)
-    with open(f"daily/research/{today}.md", 'w', encoding='utf-8') as f:
-        f.write(research_md)
-    print(f"  ✅ daily/research/{today}.md")
+    # Research - solo si hay papers nuevos
+    research_file = f"daily/research/{today}.md"
+    if research and not research[0].get('error'):
+        if has_new_papers(research, today):
+            research_md = generate_research_markdown(today, research)
+            with open(research_file, 'w', encoding='utf-8') as f:
+                f.write(research_md)
+            print(f"  ✅ daily/research/{today}.md ({len(research)} nuevos papers)")
+        else:
+            print(f"  ⏭️  daily/research/{today}.md (sin papers nuevos, no generado)")
+    else:
+        print(f"  ⚠️  daily/research/{today}.md (error al obtener datos)")
     
     # Docs
     docs_md = generate_docs_markdown(today, docs)
@@ -638,6 +656,51 @@ def main():
     
     # Actualizar índice
     update_index()
+
+
+def has_new_papers(current_papers: List[Dict], today: str) -> bool:
+    """Comprueba si hay papers nuevos comparando con el día anterior."""
+    import glob
+    
+    # Buscar archivo de research del día anterior
+    research_files = sorted(glob.glob('daily/research/*.md'), reverse=True)
+    
+    if not research_files:
+        return True  # No hay archivos previos, todo es nuevo
+    
+    # Leer el archivo más reciente que NO sea el de hoy
+    previous_file = None
+    for f in research_files:
+        if today not in f:
+            previous_file = f
+            break
+    
+    if not previous_file:
+        return True  # No hay archivo previo
+    
+    try:
+        with open(previous_file, 'r', encoding='utf-8') as f:
+            previous_content = f.read()
+        
+        # Extraer URLs de papers del archivo anterior
+        import re
+        previous_urls = set(re.findall(r'https://www\.anthropic\.com/research/[^\s\)\]]+', previous_content))
+        
+        # Comprobar si algún paper actual es nuevo
+        current_urls = {paper['url'] for paper in current_papers if paper.get('url')}
+        
+        new_urls = current_urls - previous_urls
+        
+        if new_urls:
+            print(f"    📄 {len(new_urls)} papers nuevos encontrados")
+            return True
+        else:
+            print(f"    📄 Sin papers nuevos (todos ya estaban en {os.path.basename(previous_file)})")
+            return False
+            
+    except Exception as e:
+        print(f"    ⚠️ Error comparando con archivo anterior: {e}")
+        return True  # En caso de error, generar de todos modos
 
 
 def update_index():
